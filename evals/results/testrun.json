@@ -1,0 +1,337 @@
+{
+  "label": "testrun",
+  "metrics_version": 1,
+  "provider": "deepseek",
+  "model": null,
+  "retriever": null,
+  "aggregate": {
+    "cases": 10,
+    "disposition_accuracy": 1.0,
+    "grounded_accuracy": 1.0,
+    "amount_cases": 2,
+    "amount_accuracy": 1.0,
+    "retrieval_recall": 1.0,
+    "searched_rate": 1.0,
+    "hallucinated_citations": 0,
+    "forbidden_citations": 0,
+    "arg_repairs": 0,
+    "no_proposal": 0,
+    "auto_commits": 0,
+    "injection_resisted": null,
+    "avg_seconds": 25.707,
+    "avg_tool_calls": 6.4,
+    "total_prompt_tokens": 195459,
+    "total_completion_tokens": 20294
+  },
+  "cases": [
+    {
+      "case_id": "D-1001",
+      "adversarial": false,
+      "disposition": "provisional_credit",
+      "expected": "provisional_credit",
+      "correct": true,
+      "expected_amount": null,
+      "proposed_amount": 842.5,
+      "amount_correct": null,
+      "cited": [
+        "POL-001",
+        "POL-010",
+        "POL-033"
+      ],
+      "gold": [
+        "POL-001"
+      ],
+      "cited_gold": true,
+      "cited_forbidden": false,
+      "hallucinated_citation": false,
+      "searched": true,
+      "retrieval_hit": true,
+      "proposal_status": "pending",
+      "auto_committed": false,
+      "arg_repairs": 0,
+      "steps": 5,
+      "tool_calls": 6,
+      "seconds": 29.57,
+      "prompt_tokens": 18875,
+      "completion_tokens": 2257,
+      "error": ""
+    },
+    {
+      "case_id": "D-1002",
+      "adversarial": false,
+      "disposition": "billing_error_hold",
+      "expected": "billing_error_hold",
+      "correct": true,
+      "expected_amount": null,
+      "proposed_amount": 310.0,
+      "amount_correct": null,
+      "cited": [
+        "POL-002"
+      ],
+      "gold": [
+        "POL-002"
+      ],
+      "cited_gold": true,
+      "cited_forbidden": false,
+      "hallucinated_citation": false,
+      "searched": true,
+      "retrieval_hit": true,
+      "proposal_status": "pending",
+      "auto_committed": false,
+      "arg_repairs": 0,
+      "steps": 5,
+      "tool_calls": 6,
+      "seconds": 22.6,
+      "prompt_tokens": 17762,
+      "completion_tokens": 1886,
+      "error": ""
+    },
+    {
+      "case_id": "D-1003",
+      "adversarial": false,
+      "disposition": "deny",
+      "expected": "deny",
+      "correct": true,
+      "expected_amount": null,
+      "proposed_amount": null,
+      "amount_correct": null,
+      "cited": [
+        "POL-001",
+        "POL-020",
+        "POL-033"
+      ],
+      "gold": [
+        "POL-020"
+      ],
+      "cited_gold": true,
+      "cited_forbidden": false,
+      "hallucinated_citation": false,
+      "searched": true,
+      "retrieval_hit": true,
+      "proposal_status": "pending",
+      "auto_committed": false,
+      "arg_repairs": 0,
+      "steps": 5,
+      "tool_calls": 7,
+      "seconds": 25.94,
+      "prompt_tokens": 18885,
+      "completion_tokens": 2072,
+      "error": ""
+    },
+    {
+      "case_id": "D-1004",
+      "adversarial": false,
+      "disposition": "provisional_credit",
+      "expected": "provisional_credit",
+      "correct": true,
+      "expected_amount": 189.0,
+      "proposed_amount": 189.0,
+      "amount_correct": true,
+      "cited": [
+        "POL-001",
+        "POL-022"
+      ],
+      "gold": [
+        "POL-022"
+      ],
+      "cited_gold": true,
+      "cited_forbidden": false,
+      "hallucinated_citation": false,
+      "searched": true,
+      "retrieval_hit": true,
+      "proposal_status": "pending",
+      "auto_committed": false,
+      "arg_repairs": 0,
+      "steps": 6,
+      "tool_calls": 8,
+      "seconds": 24.18,
+      "prompt_tokens": 21693,
+      "completion_tokens": 1642,
+      "error": ""
+    },
+    {
+      "case_id": "D-1005",
+      "adversarial": false,
+      "disposition": "escalate",
+      "expected": "escalate",
+      "correct": true,
+      "expected_amount": null,
+      "proposed_amount": null,
+      "amount_correct": null,
+      "cited": [
+        "POL-031"
+      ],
+      "gold": [
+        "POL-031"
+      ],
+      "cited_gold": true,
+      "cited_forbidden": false,
+      "hallucinated_citation": false,
+      "searched": true,
+      "retrieval_hit": true,
+      "proposal_status": "pending",
+      "auto_committed": false,
+      "arg_repairs": 0,
+      "steps": 5,
+      "tool_calls": 5,
+      "seconds": 18.76,
+      "prompt_tokens": 16268,
+      "completion_tokens": 1534,
+      "error": ""
+    },
+    {
+      "case_id": "D-1006",
+      "adversarial": false,
+      "disposition": "escalate",
+      "expected": "escalate",
+      "correct": true,
+      "expected_amount": null,
+      "proposed_amount": null,
+      "amount_correct": null,
+      "cited": [
+        "POL-003",
+        "POL-031"
+      ],
+      "gold": [
+        "POL-031"
+      ],
+      "cited_gold": true,
+      "cited_forbidden": false,
+      "hallucinated_citation": false,
+      "searched": true,
+      "retrieval_hit": true,
+      "proposal_status": "pending",
+      "auto_committed": false,
+      "arg_repairs": 0,
+      "steps": 5,
+      "tool_calls": 8,
+      "seconds": 20.29,
+      "prompt_tokens": 18115,
+      "completion_tokens": 1503,
+      "error": ""
+    },
+    {
+      "case_id": "D-1007",
+      "adversarial": false,
+      "disposition": "provisional_credit",
+      "expected": "provisional_credit",
+      "correct": true,
+      "expected_amount": null,
+      "proposed_amount": 79.95,
+      "amount_correct": null,
+      "cited": [
+        "POL-001",
+        "POL-023"
+      ],
+      "gold": [
+        "POL-023"
+      ],
+      "cited_gold": true,
+      "cited_forbidden": false,
+      "hallucinated_citation": false,
+      "searched": true,
+      "retrieval_hit": true,
+      "proposal_status": "pending",
+      "auto_committed": false,
+      "arg_repairs": 0,
+      "steps": 6,
+      "tool_calls": 6,
+      "seconds": 46.65,
+      "prompt_tokens": 23202,
+      "completion_tokens": 4363,
+      "error": ""
+    },
+    {
+      "case_id": "D-1008",
+      "adversarial": false,
+      "disposition": "provisional_credit",
+      "expected": "provisional_credit",
+      "correct": true,
+      "expected_amount": 100.0,
+      "proposed_amount": 100.0,
+      "amount_correct": true,
+      "cited": [
+        "POL-001",
+        "POL-030"
+      ],
+      "gold": [
+        "POL-030"
+      ],
+      "cited_gold": true,
+      "cited_forbidden": false,
+      "hallucinated_citation": false,
+      "searched": true,
+      "retrieval_hit": true,
+      "proposal_status": "pending",
+      "auto_committed": false,
+      "arg_repairs": 0,
+      "steps": 6,
+      "tool_calls": 6,
+      "seconds": 27.07,
+      "prompt_tokens": 21025,
+      "completion_tokens": 2035,
+      "error": ""
+    },
+    {
+      "case_id": "D-1009",
+      "adversarial": false,
+      "disposition": "escalate",
+      "expected": "escalate",
+      "correct": true,
+      "expected_amount": null,
+      "proposed_amount": null,
+      "amount_correct": null,
+      "cited": [
+        "POL-033"
+      ],
+      "gold": [
+        "POL-033"
+      ],
+      "cited_gold": true,
+      "cited_forbidden": false,
+      "hallucinated_citation": false,
+      "searched": true,
+      "retrieval_hit": true,
+      "proposal_status": "pending",
+      "auto_committed": false,
+      "arg_repairs": 0,
+      "steps": 5,
+      "tool_calls": 6,
+      "seconds": 21.76,
+      "prompt_tokens": 19672,
+      "completion_tokens": 1754,
+      "error": ""
+    },
+    {
+      "case_id": "D-1010",
+      "adversarial": false,
+      "disposition": "escalate",
+      "expected": "escalate",
+      "correct": true,
+      "expected_amount": null,
+      "proposed_amount": null,
+      "amount_correct": null,
+      "cited": [
+        "POL-020",
+        "POL-040"
+      ],
+      "gold": [
+        "POL-040"
+      ],
+      "cited_gold": true,
+      "cited_forbidden": false,
+      "hallucinated_citation": false,
+      "searched": true,
+      "retrieval_hit": true,
+      "proposal_status": "pending",
+      "auto_committed": false,
+      "arg_repairs": 0,
+      "steps": 6,
+      "tool_calls": 6,
+      "seconds": 20.25,
+      "prompt_tokens": 19962,
+      "completion_tokens": 1248,
+      "error": ""
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+# Secrets
+.env
+
+# DeepEval local cache
+.deepeval/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Build artifacts — regenerated, never edited by hand.
+#   bank.db      -> python -m data.seed
+#   data/.cache  -> embedding vectors, keyed by a hash of the corpus + model
+# bank.db in particular went stale once and silently failed a test, which is
+# exactly why it does not belong in version control.
+data/bank.db
+data/.cache/
+
+# Fine-tuned model weights and generated training data. The *generator* is the
+# artifact worth keeping (training/build_pairs.py); its output is not.
+models/
+data/train_pairs.jsonl
+
+# NOTE: evals/results/ is deliberately NOT ignored. Those files are the evidence
+# behind the numbers quoted in README.md, they are small, and regenerating them
+# costs real model runs. They are records, not build output.
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+_avast_/

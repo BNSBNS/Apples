@@ -1,0 +1,75 @@
+{
+  "label": "fixed-2case",
+  "provider": "local",
+  "model": "qwen2.5:7b",
+  "retriever": null,
+  "aggregate": {
+    "cases": 2,
+    "disposition_accuracy": 0.0,
+    "grounded_accuracy": 0.0,
+    "retrieval_recall": 0.0,
+    "searched_rate": 1.0,
+    "hallucinated_citations": 0,
+    "forbidden_citations": 0,
+    "arg_repairs": 0,
+    "no_proposal": 2,
+    "auto_commits": 0,
+    "injection_resisted": null,
+    "avg_seconds": 586.605,
+    "avg_tool_calls": 8.0,
+    "total_prompt_tokens": 44332,
+    "total_completion_tokens": 2402
+  },
+  "cases": [
+    {
+      "case_id": "D-1001",
+      "adversarial": false,
+      "disposition": null,
+      "expected": "provisional_credit",
+      "correct": false,
+      "cited": [],
+      "gold": [
+        "POL-001"
+      ],
+      "cited_gold": false,
+      "cited_forbidden": false,
+      "hallucinated_citation": false,
+      "searched": true,
+      "retrieval_hit": false,
+      "proposal_status": null,
+      "auto_committed": false,
+      "arg_repairs": 0,
+      "steps": 12,
+      "tool_calls": 7,
+      "seconds": 153.54,
+      "prompt_tokens": 23738,
+      "completion_tokens": 880,
+      "error": "no proposal recorded"
+    },
+    {
+      "case_id": "D-1002",
+      "adversarial": false,
+      "disposition": null,
+      "expected": "billing_error_hold",
+      "correct": false,
+      "cited": [],
+      "gold": [
+        "POL-002"
+      ],
+      "cited_gold": false,
+      "cited_forbidden": false,
+      "hallucinated_citation": false,
+      "searched": true,
+      "retrieval_hit": false,
+      "proposal_status": null,
+      "auto_committed": false,
+      "arg_repairs": 0,
+      "steps": 10,
+      "tool_calls": 9,
+      "seconds": 1019.67,
+      "prompt_tokens": 20594,
+      "completion_tokens": 1522,
+      "error": "no proposal recorded"
+    }
+  ]
+}
