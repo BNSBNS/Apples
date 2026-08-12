@@ -30,6 +30,9 @@ data/train_pairs.jsonl
 # behind the numbers quoted in README.md, they are small, and regenerating them
 # costs real model runs. They are records, not build output.
 
+# Runtime logs — rolling, not worth versioning
+logs/
+
 # Editor / OS
 .vscode/
 .idea/

@@ -147,6 +147,9 @@ TRANSACTIONS = [
     ("T-2039", "C-108", "2026-06-10",  150.00, "Riverbend Utilities", "utilities",    "online",       "settled"),
     ("T-2040", "C-112", "2026-02-14",  225.00, "Vector Games",        "entertainment","online",       "settled"),
     ("T-2041", "C-100", "2026-07-28",  530.00, "Aurora Travel Group", "travel",       "online",       "settled"),
+    # Cross-currency: EUR 310 converted at ~1.0985 should be ~USD 340.54, but
+    # the statement shows USD 372.65 — a ~9% markup the agent should flag.
+    ("T-2042", "C-111", "2026-07-11",  372.65, "Maison Laurent Paris", "retail",      "online",       "settled"),
 ]
 
 # id,      cust,    txn,       category,              reported,     stmt_date,    customer_statement
@@ -236,6 +239,12 @@ DISPUTES = [
     ("D-1030", "C-100", "T-2041", "not_received",        "2026-08-02", "2026-07-30",
      "Booked a trip on 28 July, was told documents would arrive by 1 August, and they have "
      "not. I have not contacted the merchant yet."),
+    # Cross-currency dispute: customer says the EUR price was 310 but statement shows
+    # USD 372.65 — the mid-market rate on 2026-07-11 gives ~340.54, so the markup is real.
+    ("D-1031", "C-111", "T-2042", "unauthorised",        "2026-07-18", "2026-07-15",
+     "I bought a handbag from a Paris boutique listed at EUR 310. My credit card was charged "
+     "USD 372.65 which seems far too high for the conversion. The rate should have been about "
+     "1.10, making it around 341 dollars."),
 ]
 # fmt: on
 

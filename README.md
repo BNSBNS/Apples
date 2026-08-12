@@ -33,6 +33,185 @@ The model never talks to the MCP server. The agent brokers. `server/` never
 imports an LLM SDK — it works identically whether the caller is Ollama, OpenAI,
 Claude Desktop, or the MCP Inspector.
 
+### C4 Model
+
+**Level 1 — System Context**
+
+```mermaid
+C4Context
+    title System Context — Dispute Desk
+
+    Person(analyst, "Bank Analyst", "Reviews and approves or denies proposed dispute resolutions")
+
+    System(desk, "Dispute Desk", "MCP server + agentic loop for bank dispute triage. Agent reads disputes, searches policy, proposes resolutions for human review")
+
+    System_Ext(llm, "LLM Provider", "Ollama (local, free, offline), OpenAI, or DeepSeek — all via OpenAI wire format")
+
+    Rel(analyst, desk, "Reviews proposals, approves or denies", "CLI or web dashboard")
+    Rel(desk, llm, "Chat completions with function calling", "OpenAI wire format")
+```
+
+**Level 2 — Containers**
+
+The writer and verifier agents are the same loop code (`run_agent` in
+`loop_manual.py`) with different `AgentSpec` configs — different system prompt,
+different allowed tools, different terminal tool. The MCP server is always a
+separate process (stdio subprocess or ASGI app). The model never contacts it
+directly.
+
+```mermaid
+C4Container
+    title Container — Dispute Desk
+
+    Person(analyst, "Bank Analyst", "Reviews proposals via CLI or dashboard")
+    System_Ext(llm, "LLM Provider", "Ollama / OpenAI / DeepSeek")
+
+    Container_Boundary(desk, "Dispute Desk") {
+        Container(writer, "Writer Agent", "Python, AsyncOpenAI, MCP ClientSession", "Triage loop (max 12 steps): discover tools, call LLM, execute tool, repeat. Terminal tool: propose_resolution")
+        Container(verifier, "Verifier Agent", "Python, AsyncOpenAI, MCP ClientSession", "Independent proposal review. Same loop code, different AgentSpec. Terminal tool: record_verdict. Cannot call propose_resolution")
+        Container(server, "MCP Server", "Python, mcp 2.0 SDK (MCPServer)", "7 tools, 1 resource, 1 prompt. RAG retrieval (TF-IDF or embedding + optional cross-encoder reranker). Enforces grounding, scopes, one-proposal-per-dispute. Runs over stdio or authenticated HTTP (Starlette ASGI)")
+        Container(approval, "Approval Gate", "Python CLI (agent/approval.py)", "Only code that can move a proposal from pending to approved or denied. Not importable by agent code")
+        ContainerDb(db, "SQLite Database", "WAL mode, data/bank.db", "Customers, transactions, disputes, proposals. insert_proposal always sets status to pending")
+        Container(policies, "Policy Corpus", "15 Markdown files in data/policies/", "Deliberately confusable dispute policies (POL-001 through POL-040). Loaded by server retriever at init")
+        Container(dashboard, "Dashboard", "Python ThreadingHTTPServer, vanilla JS, SSE", "Runs writer agent internally with SSE observer for real-time traces. Approval panel. localhost:7777")
+    }
+
+    Rel(writer, llm, "chat.completions.create()", "OpenAI wire format")
+    Rel(verifier, llm, "chat.completions.create()", "OpenAI wire format")
+    Rel(writer, server, "list_tools(), call_tool()", "MCP 2.0 stdio or streamable HTTP")
+    Rel(verifier, server, "list_tools(), call_tool()", "MCP 2.0 stdio or streamable HTTP")
+    Rel(server, db, "Reads disputes/txns/customers, writes pending proposals", "sqlite3")
+    Rel(server, policies, "RAG search at query time", "filesystem")
+    Rel(approval, db, "Updates proposal status: pending to approved/denied", "sqlite3")
+    Rel(analyst, approval, "Approve or deny", "CLI")
+    Rel(analyst, dashboard, "Triage disputes, review proposals, approve/deny", "browser")
+    Rel(dashboard, db, "Reads disputes and proposals directly, not through MCP", "sqlite3")
+    Rel(dashboard, approval, "Calls decide() for approve/deny from the UI", "in-process")
+```
+
+The eval suite (`evals/`) and training pipeline (`training/`) are offline
+development tools, not runtime containers — they invoke the agent and retriever
+in isolation against fresh temp databases.
+
+**Level 3 — MCP Server Components** (`server/`)
+
+```mermaid
+C4Component
+    title MCP Server — Components
+
+    Container(agent, "Agent Process", "", "Writer or Verifier")
+    ContainerDb(sqlite, "SQLite", "", "data/bank.db")
+    Container(corpus, "Policy Corpus", "", "data/policies/*.md")
+
+    Container_Boundary(srv, "MCP Server") {
+        Component(read, "Read Tools", "server/app.py", "get_dispute, get_transaction, list_customer_transactions, get_dispute_history")
+        Component(search, "search_policy", "server/app.py", "RAG search. Records returned policy IDs in SessionStore for grounding")
+        Component(propose, "propose_resolution", "server/app.py", "Terminal write. Validates disposition, citation existence, grounding, one-per-dispute. Status always pending")
+        Component(verdict, "record_verdict", "server/app.py", "Verifier terminal. Annotates existing proposal. Cannot change disposition, amount, or status")
+        Component(retriever, "Retriever", "server/retrieval.py", "Protocol with two impls: KeywordRetriever (TF-IDF, stdlib) and EmbeddingRetriever (Ollama nomic-embed-text, numpy cosine)")
+        Component(reranker, "Reranker", "server/rerank.py", "CrossEncoderReranker (ms-marco-MiniLM-L-6-v2). RerankingRetriever wraps any Retriever. Optional")
+        Component(session, "Session and Grounding", "server/session_state.py", "SessionStore keyed by Mcp-Session-Id. require_scope() enforces dispute:read, dispute:propose, dispute:verify")
+        Component(dbaccess, "DB Access", "server/db.py", "query(), one(), insert_proposal(), record_verdict(). WAL mode. insert_proposal cannot set status")
+        Component(http, "HTTP Transport", "server/http_app.py", "StaticTokenVerifier, build_app(). Starlette ASGI via streamable_http_app()")
+    }
+
+    Rel(agent, read, "call_tool()", "MCP 2.0")
+    Rel(agent, search, "call_tool()", "MCP 2.0")
+    Rel(agent, propose, "call_tool()", "MCP 2.0")
+    Rel(agent, verdict, "call_tool()", "MCP 2.0")
+    Rel(search, retriever, "search(query, k)")
+    Rel(retriever, reranker, "optional wrap via RerankingRetriever")
+    Rel(search, session, "records returned policy IDs per session")
+    Rel(propose, session, "checks grounding and require_scope(dispute:propose)")
+    Rel(verdict, session, "require_scope(dispute:verify)")
+    Rel(read, dbaccess, "query(), one()")
+    Rel(propose, dbaccess, "insert_proposal()")
+    Rel(verdict, dbaccess, "record_verdict()")
+    Rel(dbaccess, sqlite, "sqlite3.connect()")
+    Rel(retriever, corpus, "loads chunks at init, searches at query time")
+    Rel(http, session, "bearer token scopes flow to require_scope()")
+```
+
+**Level 3 — Agent Components** (`agent/`)
+
+```mermaid
+C4Component
+    title Agent Layer — Components
+
+    System_Ext(llm, "LLM Provider", "", "Ollama / OpenAI / DeepSeek")
+    Container(server, "MCP Server", "", "server/")
+    ContainerDb(sqlite, "SQLite", "", "data/bank.db")
+
+    Container_Boundary(agt, "Agent Layer") {
+        Component(loop, "Agentic Loop", "agent/loop_manual.py", "run_agent(), AgentSpec, open_transport(), mcp_tools_to_openai(), coerce_arguments(). Max 12 steps, nudge at 5, chase on text-only finish")
+        Component(agentgraph, "LangGraph Agent", "agent/graph.py", "build_graph(), AgentState, MCPTool, mcp_tools_to_langchain(). StateGraph: call_model, execute_tools, chase nodes")
+        Component(repl, "Interactive REPL", "agent/chat.py", "input() loop over LangGraph agent. Connects via stdio directly. Optional Langfuse tracing callback")
+        Component(verify, "Verifier", "agent/verify.py", "verifier_spec(), VERIFIER_TOOLS: 5 tools (no propose_resolution). Terminal: record_verdict")
+        Component(providers, "Providers", "agent/providers.py", "ProviderConfig, Provider, get_provider(). PROVIDERS table: base_url, key_env, model per provider")
+        Component(prompts, "System Prompts", "agent/prompts.py", "SYSTEM (writer instructions) and VERIFIER (reviewer instructions)")
+        Component(approval, "Approval Gate", "agent/approval.py", "decide(), list_pending(). Only path to commit proposals. Not importable by loop or verify")
+    }
+
+    Rel(loop, llm, "chat.completions.create()", "AsyncOpenAI")
+    Rel(loop, server, "list_tools(), call_tool()", "MCP 2.0 stdio or HTTP")
+    Rel(loop, providers, "get_provider(kind)")
+    Rel(agentgraph, llm, "ChatOpenAI.ainvoke()", "langchain_openai")
+    Rel(agentgraph, server, "session.call_tool() via MCPTool", "MCP 2.0")
+    Rel(agentgraph, loop, "imports result_to_text(), tool_schema()")
+    Rel(verify, loop, "run_agent(verifier_spec)")
+    Rel(repl, agentgraph, "invokes compiled StateGraph")
+    Rel(approval, sqlite, "pending to approved/denied", "sqlite3")
+```
+
+**Code Linkage** — file-level import graph
+
+```
+server/app.py          → server/db           query(), one()
+                       → server/retrieval    get_retriever() → Retriever protocol
+                       → server/session_state SessionStore, require_scope(), session_key()
+
+server/http_app.py     → server/app          mcp (MCPServer instance), SCOPE_* constants
+
+server/retrieval.py    → server/rerank       RerankingRetriever (conditional, when RERANK=1)
+
+server/rerank.py       → torch, transformers (lazy load on first score() call)
+                       → tls_trust           enables OS cert store for model downloads
+
+server/db.py           (stdlib only — sqlite3, pathlib, os)
+
+server/session_state.py → mcp.server.auth    caller_scopes() reads bearer token (lazy, HTTP only)
+
+agent/loop_manual.py   → agent/prompts       SYSTEM
+                       → agent/providers     get_provider(), KINDS
+                       → mcp SDK             ClientSession, StdioServerParameters, streamable_http_client
+
+agent/graph.py         → agent/loop_manual   result_to_text(), tool_schema()
+                       → langchain_core      BaseTool, message types
+                       → langchain_openai    ChatOpenAI
+                       → langgraph           StateGraph
+
+agent/chat.py          → agent/graph         build_graph(), mcp_tools_to_langchain(), AgentState
+                       → agent/prompts       SYSTEM
+                       → agent/providers     KINDS, PROVIDERS, ALIASES (uses own _resolve_provider(), not get_provider())
+
+agent/verify.py        → agent/loop_manual   run_agent(), AgentSpec
+                       → agent/prompts       VERIFIER
+                       → server/db           reads pending proposals (cross-boundary)
+
+agent/approval.py      → server/db           connect(), query(), one() (cross-boundary)
+
+dashboard.py           → agent/loop_manual   run() — embeds agent with SSE observer callback
+                       → agent/approval      decide(), list_pending()
+                       → server/db           reads disputes and proposals for the UI
+                       → agent/providers     get_provider()
+```
+
+Two cross-boundary imports to note: `agent/verify.py` and `agent/approval.py`
+both reach into `server/db` to read proposal state. The approval gate writes
+status there — the only write path to a committed decision. The agent code
+(`loop_manual.py`, `graph.py`) never imports `server/db` or `agent/approval` —
+it talks to the database exclusively through MCP tool calls.
+
 ---
 
 ## Quickstart

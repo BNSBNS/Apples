@@ -111,4 +111,19 @@ def get_provider(kind: str = "local", model_override: str | None = None) -> Prov
         if config.base_url
         else AsyncOpenAI(api_key=api_key)
     )
+
+    # If Langfuse is configured, wrap the client so every LLM call is traced
+    # regardless of which interface (dashboard, CLI, evals) made it.
+    if os.getenv("LANGFUSE_SECRET_KEY"):
+        try:
+            from langfuse.openai import AsyncOpenAI as LangfuseAsyncOpenAI
+
+            client = (
+                LangfuseAsyncOpenAI(base_url=config.base_url, api_key=api_key)
+                if config.base_url
+                else LangfuseAsyncOpenAI(api_key=api_key)
+            )
+        except ImportError:
+            pass
+
     return Provider(resolved, client, model)

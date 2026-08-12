@@ -91,6 +91,26 @@ DIM, BOLD, CYAN, GREEN, YELLOW, RESET = (
 )
 
 
+class _ToolProxy:
+    """Presents an MCP tool under a different name (for namespace prefixing).
+
+    `mcp_tools_to_openai` and `tool_schema` read `.name`, `.description`, and
+    `.input_schema` — this proxy overrides `.name` and delegates the rest.
+    """
+
+    def __init__(self, prefixed_name: str, original: Any) -> None:
+        self._original = original
+        self.name = prefixed_name
+
+    @property
+    def description(self) -> str | None:
+        return self._original.description
+
+    @property
+    def input_schema(self) -> Any:
+        return self._original.input_schema
+
+
 def tool_schema(tool: Any) -> dict[str, Any]:
     """Get a tool's JSON Schema off an MCP Tool object.
 
@@ -271,6 +291,16 @@ async def open_transport(server: str | None) -> AsyncIterator[tuple[Any, Any]]:
         yield streams
 
 
+@contextlib.asynccontextmanager
+async def open_fx_transport() -> AsyncIterator[tuple[Any, Any]]:
+    """Open a stdio transport to the FX rates MCP server."""
+    params = StdioServerParameters(
+        command=sys.executable, args=["-m", "fx_server.app"], cwd=os.getcwd(), env=dict(os.environ)
+    )
+    async with stdio_client(params) as streams:
+        yield streams
+
+
 def result_to_text(result: Any) -> str:
     """Flatten an MCP CallToolResult into a string for the model."""
     parts: list[str] = []
@@ -305,21 +335,40 @@ async def run(
     model_override: str | None = None,
     server: str | None = None,
     observer: Any = None,
+    use_fx: bool = False,
 ) -> dict[str, Any]:
     """Triage one dispute — the original entry point, unchanged for callers.
 
     `server=None` spawns the MCP server over stdio; a URL talks to an
     already-running one over streamable-http.
+
+    `use_fx=True` also spawns the FX rates server and merges its tools.
     """
-    return await run_agent(
-        triage_spec(dispute_id),
-        provider_kind,
-        verbose=verbose,
-        model_override=model_override,
-        server=server,
-        label=dispute_id,
-        observer=observer,
-    )
+    if not use_fx:
+        return await run_agent(
+            triage_spec(dispute_id),
+            provider_kind,
+            verbose=verbose,
+            model_override=model_override,
+            server=server,
+            label=dispute_id,
+            observer=observer,
+        )
+
+    async with open_fx_transport() as (fx_read, fx_write):
+        async with ClientSession(fx_read, fx_write) as fx_session:
+            await fx_session.initialize()
+            fx_session._server_name = "fx"
+            return await run_agent(
+                triage_spec(dispute_id),
+                provider_kind,
+                verbose=verbose,
+                model_override=model_override,
+                server=server,
+                label=dispute_id,
+                observer=observer,
+                extra_servers=[fx_session],
+            )
 
 
 async def run_agent(
@@ -330,6 +379,7 @@ async def run_agent(
     server: str | None = None,
     label: str = "",
     observer: Any = None,
+    extra_servers: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Run one agent to completion. The loop is the same for every role.
 
@@ -337,6 +387,10 @@ async def run_agent(
     every interesting moment — tool calls, results, nudges, the final
     answer.  The dashboard wires this to an SSE stream; the eval harness
     could wire it to a log.  `verbose` print output is independent.
+
+    `extra_servers` is a list of additional (already-initialized)
+    ClientSessions whose tools are merged into the agent's tool list. Each
+    tool is routed to the session that owns it via a name→session map.
     """
     notify = observer or (lambda _kind, _data: None)
     provider = get_provider(provider_kind, model_override)
@@ -363,10 +417,32 @@ async def run_agent(
         offered = [
             t for t in listed.tools if not spec.allowed_tools or t.name in spec.allowed_tools
         ]
+
+        # tool name → (session, original_name). The LLM sees namespaced
+        # names when multiple servers are connected; `call_tool` gets the
+        # original name the server registered. Without this, two servers
+        # exposing the same tool name would silently overwrite each other.
+        tool_router: dict[str, tuple[ClientSession, str]] = {
+            t.name: (session, t.name) for t in offered
+        }
+
+        # Merge tools from any extra MCP servers, namespaced.
+        for extra_session in extra_servers or []:
+            extra_listed = await extra_session.list_tools()
+            server_name = getattr(extra_session, "_server_name", "extra")
+            for t in extra_listed.tools:
+                if not spec.allowed_tools or t.name in spec.allowed_tools:
+                    if t.name in tool_router:
+                        prefixed = f"{server_name}__{t.name}"
+                    else:
+                        prefixed = t.name
+                    offered.append(_ToolProxy(prefixed, t))
+                    tool_router[prefixed] = (extra_session, t.name)
+
         tools = mcp_tools_to_openai(offered)
         schemas = {t.name: tool_schema(t) for t in offered}
         if verbose:
-            print(f"{DIM}connected to dispute-desk — {len(tools)} tools{RESET}")
+            print(f"{DIM}connected — {len(tools)} tools from {1 + len(extra_servers or [])} server(s){RESET}")
             print(f"{DIM}provider: {provider}{RESET}\n")
         notify("connect", {"tools": [t.name for t in offered], "provider": str(provider)})
 
@@ -523,7 +599,8 @@ async def run_agent(
                     notify("repair", {"detail": repair, "step": step})
 
                 try:
-                    result = await session.call_tool(name, arguments=args)
+                    target_session, original_name = tool_router.get(name, (session, name))
+                    result = await target_session.call_tool(original_name, arguments=args)
                     payload = result_to_text(result)
                     # A tool can also fail *inside* a successful call: the
                     # RPC succeeds and the result carries an error flag.
@@ -568,6 +645,156 @@ async def run_agent(
         }
 
 
+async def run_followup(
+    messages: list[dict[str, Any]],
+    user_message: str,
+    provider_kind: str,
+    model_override: str | None = None,
+    server: str | None = None,
+    observer: Any = None,
+    use_fx: bool = False,
+) -> dict[str, Any]:
+    """Run a follow-up turn with full tool access.
+
+    Takes the message history from a previous triage run, appends the new
+    user message, opens MCP server(s), and runs a short agent loop so the
+    model can call tools (e.g. FX rate lookups) to answer the question.
+    """
+    notify = observer or (lambda _kind, _data: None)
+    provider = get_provider(provider_kind, model_override)
+
+    started = time.time()
+    prompt_tokens = completion_tokens = 0
+    trace: list[dict[str, Any]] = []
+    repairs: list[str] = []
+
+    max_turns = 5
+
+    stack = contextlib.AsyncExitStack()
+    try:
+        read, write = await stack.enter_async_context(open_transport(server))
+        session = await stack.enter_async_context(ClientSession(read, write))
+        await session.initialize()
+
+        listed = await session.list_tools()
+        offered = list(listed.tools)
+        tool_router: dict[str, tuple[ClientSession, str]] = {
+            t.name: (session, t.name) for t in offered
+        }
+
+        if use_fx:
+            fx_read, fx_write = await stack.enter_async_context(open_fx_transport())
+            fx_session = await stack.enter_async_context(ClientSession(fx_read, fx_write))
+            await fx_session.initialize()
+            fx_listed = await fx_session.list_tools()
+            for t in fx_listed.tools:
+                if t.name in tool_router:
+                    prefixed = f"fx__{t.name}"
+                else:
+                    prefixed = t.name
+                offered.append(_ToolProxy(prefixed, t))
+                tool_router[prefixed] = (fx_session, t.name)
+
+        tools = mcp_tools_to_openai(offered)
+        schemas = {t.name: tool_schema(t) for t in offered}
+
+        msgs = list(messages)
+        msgs.append({"role": "user", "content": user_message})
+
+        for step in range(1, max_turns + 1):
+            notify("step", {"step": step})
+
+            reply = await provider.client.chat.completions.create(
+                model=provider.model,
+                messages=msgs,
+                tools=tools,
+                tool_choice="auto",
+            )
+            if reply.usage:
+                prompt_tokens += reply.usage.prompt_tokens or 0
+                completion_tokens += reply.usage.completion_tokens or 0
+
+            msg = reply.choices[0].message
+            calls = msg.tool_calls or []
+
+            if not calls:
+                text = (msg.content or "").strip()
+                notify("chat_reply", {"text": text})
+                msgs.append({"role": "assistant", "content": text})
+                return {
+                    "text": text,
+                    "messages": msgs,
+                    "steps": step,
+                    "trace": trace,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "seconds": round(time.time() - started, 2),
+                }
+
+            if msg.content and msg.content.strip():
+                notify("reasoning", {"text": msg.content.strip(), "step": step})
+
+            msgs.append({
+                "role": "assistant",
+                "content": msg.content or "",
+                "tool_calls": [
+                    {
+                        "id": c.id,
+                        "type": "function",
+                        "function": {
+                            "name": c.function.name,
+                            "arguments": c.function.arguments,
+                        },
+                    }
+                    for c in calls
+                ],
+            })
+
+            for call in calls:
+                name = call.function.name
+                try:
+                    args = json.loads(call.function.arguments or "{}")
+                except json.JSONDecodeError as exc:
+                    payload = f"ERROR: arguments were not valid JSON ({exc}). Retry the call."
+                    msgs.append({"role": "tool", "tool_call_id": call.id, "content": payload})
+                    continue
+
+                args, repair = coerce_arguments(name, args, schemas)
+                if repair:
+                    repairs.append(repair)
+
+                notify("tool_call", {"name": name, "args": args, "step": step})
+                if repair:
+                    notify("repair", {"detail": repair, "step": step})
+
+                try:
+                    target_session, original_name = tool_router.get(name, (session, name))
+                    result = await target_session.call_tool(original_name, arguments=args)
+                    payload = result_to_text(result)
+                    if getattr(result, "is_error", False):
+                        payload = f"{payload}\n{schema_hint(name, schemas)}"
+                except Exception as exc:
+                    payload = f"ERROR calling {name}: {exc}\n{schema_hint(name, schemas)}"
+
+                trace.append({"tool": name, "args": args, "result": payload})
+                notify("tool_result", {"name": name, "result": payload, "step": step})
+                msgs.append({"role": "tool", "tool_call_id": call.id, "content": payload})
+
+        text = "(reached follow-up step limit without a final answer)"
+        notify("chat_reply", {"text": text})
+        return {
+            "text": text,
+            "messages": msgs,
+            "steps": max_turns,
+            "trace": trace,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "seconds": round(time.time() - started, 2),
+        }
+    finally:
+        await stack.aclose()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Triage a dispute with a hand-written agent loop.")
     ap.add_argument("--dispute", default="D-1004", help="dispute id, e.g. D-1004")
@@ -580,6 +807,7 @@ def main() -> None:
         help="talk to a running MCP server over HTTP (e.g. http://localhost:8000/mcp); "
         "omit to spawn one over stdio. Token comes from MCP_TOKEN.",
     )
+    ap.add_argument("--fx", action="store_true", help="also connect to the FX rates MCP server")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
@@ -590,6 +818,7 @@ def main() -> None:
             verbose=not args.quiet,
             model_override=args.model,
             server=args.server,
+            use_fx=args.fx,
         )
     )
 

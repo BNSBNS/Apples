@@ -28,6 +28,7 @@ from agent.graph import (
     build_graph,
     mcp_tools_to_langchain,
 )
+from agent.loop_manual import open_fx_transport
 from agent.prompts import SYSTEM
 from agent.providers import KINDS, PROVIDERS, ALIASES
 
@@ -94,94 +95,108 @@ async def run_interactive(args: argparse.Namespace) -> None:
         env=dict(os.environ),
     )
 
-    print(f"{DIM}connecting to MCP server...{RESET}")
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            listed = await session.list_tools()
-            tools = mcp_tools_to_langchain(listed.tools, session)
-            print(
-                f"{DIM}connected — {len(tools)} tools, "
-                f"provider={args.provider}, model={model_name}{RESET}"
+    print(f"{DIM}connecting to MCP server(s)...{RESET}")
+
+    # Context manager stack: primary server always, FX server when --fx.
+    import contextlib
+    stack = contextlib.AsyncExitStack()
+
+    try:
+        read, write = await stack.enter_async_context(stdio_client(params))
+        session = await stack.enter_async_context(ClientSession(read, write))
+        await session.initialize()
+        listed = await session.list_tools()
+        tools = mcp_tools_to_langchain(listed.tools, session)
+
+        if args.fx:
+            fx_read, fx_write = await stack.enter_async_context(open_fx_transport())
+            fx_session = await stack.enter_async_context(ClientSession(fx_read, fx_write))
+            await fx_session.initialize()
+            fx_listed = await fx_session.list_tools()
+            tools.extend(mcp_tools_to_langchain(fx_listed.tools, fx_session))
+
+        server_count = 2 if args.fx else 1
+        print(
+            f"{DIM}connected — {len(tools)} tools from {server_count} server(s), "
+            f"provider={args.provider}, model={model_name}{RESET}"
+        )
+        print(
+            f"{DIM}budget: {MAX_STEPS} steps, "
+            f"{MAX_TOKENS:,} tokens max{RESET}\n"
+        )
+
+        app = build_graph(
+            tools=tools,
+            model_name=model_name,
+            base_url=base_url,
+            api_key=api_key,
+            nudge_text=NUDGE,
+            system_prompt=SYSTEM,
+        )
+
+        lf = _langfuse_callback()
+        invoke_config = {"callbacks": [lf]} if lf else {}
+
+        initial_messages: list = []
+
+        if args.dispute:
+            initial_messages.append(
+                HumanMessage(content=f"Triage dispute {args.dispute}.")
             )
-            print(
-                f"{DIM}budget: {MAX_STEPS} steps, "
-                f"{MAX_TOKENS:,} tokens max{RESET}\n"
+            print(f"{GREEN}> Triage dispute {args.dispute}{RESET}\n")
+
+            state = AgentState(messages=initial_messages)
+            result = await app.ainvoke(state, config=invoke_config)
+
+            for msg in result["messages"]:
+                if isinstance(msg, AIMessage) and msg.tool_calls:
+                    _print_tool_calls(msg)
+                elif isinstance(msg, ToolMessage):
+                    _print_tool_result(msg)
+                elif isinstance(msg, AIMessage) and msg.content:
+                    print(f"\n{BOLD}assistant:{RESET} {msg.content}\n")
+
+            initial_messages = result["messages"]
+            print(f"\n{DIM}{'─' * 60}{RESET}")
+            tokens = result.get("total_tokens", 0)
+            steps = result.get("steps", 0)
+            print(f"{DIM}{steps} steps, {tokens:,} tokens used{RESET}\n")
+
+        print(f"{DIM}Type a message (or 'quit' to exit){RESET}")
+        while True:
+            try:
+                user_input = input(f"\n{GREEN}you:{RESET} ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print(f"\n{DIM}goodbye{RESET}")
+                break
+
+            if not user_input or user_input.lower() in ("quit", "exit", "q"):
+                break
+
+            state = AgentState(
+                messages=initial_messages + [HumanMessage(content=user_input)]
             )
+            result = await app.ainvoke(state, config=invoke_config)
 
-            app = build_graph(
-                tools=tools,
-                model_name=model_name,
-                base_url=base_url,
-                api_key=api_key,
-                nudge_text=NUDGE,
-                system_prompt=SYSTEM,
-            )
+            for msg in result["messages"]:
+                if isinstance(msg, AIMessage) and msg.tool_calls:
+                    _print_tool_calls(msg)
+                elif isinstance(msg, ToolMessage):
+                    _print_tool_result(msg)
+                elif isinstance(msg, AIMessage) and msg.content:
+                    print(f"\n{BOLD}assistant:{RESET} {msg.content}")
 
-            lf = _langfuse_callback()
-            invoke_config = {"callbacks": [lf]} if lf else {}
+            initial_messages = result["messages"]
+            tokens = result.get("total_tokens", 0)
+            steps = result.get("steps", 0)
+            print(f"\n{DIM}{steps} steps, {tokens:,} tokens used{RESET}")
 
-            initial_messages: list = []
+        if lf:
+            from langfuse import get_client
+            get_client().flush()
 
-            # If a dispute was given, start with it as the first message.
-            # System prompt is managed by the graph via build_graph(system_prompt=...).
-            if args.dispute:
-                initial_messages.append(
-                    HumanMessage(content=f"Triage dispute {args.dispute}.")
-                )
-                print(f"{GREEN}> Triage dispute {args.dispute}{RESET}\n")
-
-                state = AgentState(messages=initial_messages)
-                result = await app.ainvoke(state, config=invoke_config)
-
-                for msg in result["messages"]:
-                    if isinstance(msg, AIMessage) and msg.tool_calls:
-                        _print_tool_calls(msg)
-                    elif isinstance(msg, ToolMessage):
-                        _print_tool_result(msg)
-                    elif isinstance(msg, AIMessage) and msg.content:
-                        print(f"\n{BOLD}assistant:{RESET} {msg.content}\n")
-
-                # Carry forward the full conversation.
-                initial_messages = result["messages"]
-                print(f"\n{DIM}{'─' * 60}{RESET}")
-                tokens = result.get("total_tokens", 0)
-                steps = result.get("steps", 0)
-                print(f"{DIM}{steps} steps, {tokens:,} tokens used{RESET}\n")
-
-            # Interactive loop.
-            print(f"{DIM}Type a message (or 'quit' to exit){RESET}")
-            while True:
-                try:
-                    user_input = input(f"\n{GREEN}you:{RESET} ").strip()
-                except (EOFError, KeyboardInterrupt):
-                    print(f"\n{DIM}goodbye{RESET}")
-                    break
-
-                if not user_input or user_input.lower() in ("quit", "exit", "q"):
-                    break
-
-                state = AgentState(
-                    messages=initial_messages + [HumanMessage(content=user_input)]
-                )
-                result = await app.ainvoke(state, config=invoke_config)
-
-                for msg in result["messages"]:
-                    if isinstance(msg, AIMessage) and msg.tool_calls:
-                        _print_tool_calls(msg)
-                    elif isinstance(msg, ToolMessage):
-                        _print_tool_result(msg)
-                    elif isinstance(msg, AIMessage) and msg.content:
-                        print(f"\n{BOLD}assistant:{RESET} {msg.content}")
-
-                initial_messages = result["messages"]
-                tokens = result.get("total_tokens", 0)
-                steps = result.get("steps", 0)
-                print(f"\n{DIM}{steps} steps, {tokens:,} tokens used{RESET}")
-
-            if lf:
-                from langfuse import get_client
-                get_client().flush()
+    finally:
+        await stack.aclose()
 
 
 def main() -> None:
@@ -191,6 +206,7 @@ def main() -> None:
     ap.add_argument("--dispute", default=None, help="dispute id to triage on startup")
     ap.add_argument("--provider", default="openai", choices=KINDS)
     ap.add_argument("--model", default=None, help="override the model name")
+    ap.add_argument("--fx", action="store_true", help="also connect to the FX rates MCP server")
     args = ap.parse_args()
     asyncio.run(run_interactive(args))
 

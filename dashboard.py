@@ -33,22 +33,54 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 import sys
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
+LOG_DIR = Path(__file__).parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+
+_fmt = logging.Formatter(
+    "%(asctime)s  %(levelname)-5s  %(name)s  %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+_file_handler = RotatingFileHandler(
+    LOG_DIR / "dashboard.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8",
+)
+_file_handler.setFormatter(_fmt)
+
+log = logging.getLogger("dashboard")
+log.setLevel(logging.INFO)
+log.addHandler(_file_handler)
+
+_console = logging.StreamHandler()
+_console.setFormatter(_fmt)
+log.addHandler(_console)
+
 from agent.approval import decide, list_pending
-from agent.loop_manual import run
-from agent.providers import KINDS, get_provider
+from agent.loop_manual import run, run_followup
+from agent.providers import KINDS
 from server import db
 
 _sessions: dict[str, dict] = {}
+
+
+def _shutdown_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Cancel lingering tasks (httpx cleanup) so loop.close() doesn't warn."""
+    pending = asyncio.all_tasks(loop)
+    for task in pending:
+        task.cancel()
+    if pending:
+        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    loop.close()
 
 PORT = 7777
 STATIC = Path(__file__).parent / "static"
@@ -57,6 +89,7 @@ STATIC = Path(__file__).parent / "static"
 class Handler(BaseHTTPRequestHandler):
     provider: str = "local"
     model_override: str | None = None
+    use_fx: bool = True
 
     def log_message(self, format, *args):
         pass
@@ -139,10 +172,13 @@ class Handler(BaseHTTPRequestHandler):
         dispute_id = (payload.get("dispute_id") or "").strip()
 
         if not dispute_id:
+            log.warning("triage called with empty dispute_id")
             self.send_response(400)
             self.end_headers()
             self.wfile.write(b'{"error":"dispute_id required"}')
             return
+
+        log.info("triage start  dispute=%s provider=%s", dispute_id, self.provider)
 
         # SSE headers — the connection stays open while events stream.
         self.send_response(200)
@@ -172,6 +208,7 @@ class Handler(BaseHTTPRequestHandler):
                     verbose=False,
                     model_override=self.model_override,
                     observer=emit,
+                    use_fx=self.use_fx,
                 )
             )
             sid = str(uuid.uuid4())
@@ -191,10 +228,16 @@ class Handler(BaseHTTPRequestHandler):
                 "repairs": result.get("repairs", []),
                 "error": result.get("error"),
             })
+            log.info(
+                "triage done   dispute=%s steps=%s seconds=%s tokens=%s",
+                dispute_id, result.get("steps", 0), result.get("seconds", 0),
+                (result.get("prompt_tokens", 0) + result.get("completion_tokens", 0)),
+            )
         except Exception as exc:
+            log.exception("triage failed for %s", dispute_id)
             emit("error", {"message": f"{type(exc).__name__}: {exc}"})
         finally:
-            loop.close()
+            _shutdown_loop(loop)
 
     def _handle_approve(self) -> None:
         """Approve or deny a pending proposal."""
@@ -211,7 +254,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(result)
 
     def _handle_chat(self) -> None:
-        """Follow-up chat — LLM only, no tools. Uses stored message history."""
+        """Follow-up chat with full MCP tool access."""
         payload = self._read_body()
         sid = payload.get("session_id", "")
         message = (payload.get("message") or "").strip()
@@ -223,8 +266,6 @@ class Handler(BaseHTTPRequestHandler):
         if not message:
             self._send_json({"error": "message required"})
             return
-
-        state["messages"].append({"role": "user", "content": message})
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -240,41 +281,30 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
-        # Build a one-off message list with a no-tools instruction appended
-        # to the system prompt. This prevents the model from emitting textual
-        # tool calls (DeepSeek's <DSML> tags, GPT's ```json blocks, etc.).
-        # The stored state is NOT modified — only this LLM call sees it.
-        chat_msgs = []
-        for m in state["messages"]:
-            if m.get("role") == "system":
-                chat_msgs.append({
-                    "role": "system",
-                    "content": m["content"] + (
-                        "\n\nYou are now answering follow-up questions about the "
-                        "triage above. Answer from the evidence already retrieved "
-                        "in this conversation. You cannot call tools or functions "
-                        "— do not attempt to. Respond in plain text."
-                    ),
-                })
-            else:
-                chat_msgs.append(m)
+        log.info("chat start   session=%s message=%s", sid, message[:80])
 
         loop = asyncio.new_event_loop()
         try:
-            provider = get_provider(state["provider_kind"], state["model_override"])
-            reply = loop.run_until_complete(
-                provider.client.chat.completions.create(
-                    model=provider.model,
-                    messages=chat_msgs,
+            result = loop.run_until_complete(
+                run_followup(
+                    messages=state["messages"],
+                    user_message=message,
+                    provider_kind=state["provider_kind"],
+                    model_override=state["model_override"],
+                    observer=emit,
+                    use_fx=self.use_fx,
                 )
             )
-            text = (reply.choices[0].message.content or "").strip()
-            state["messages"].append({"role": "assistant", "content": text})
-            emit("chat_reply", {"text": text})
+            state["messages"] = result["messages"]
+            log.info(
+                "chat done    session=%s steps=%s seconds=%s",
+                sid, result.get("steps", 0), result.get("seconds", 0),
+            )
         except Exception as exc:
+            log.exception("chat failed for session %s", sid)
             emit("error", {"message": f"{type(exc).__name__}: {exc}"})
         finally:
-            loop.close()
+            _shutdown_loop(loop)
 
     # ── OPTIONS (CORS preflight) ──────────────────────────────────────
 
@@ -291,10 +321,12 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=int(os.getenv("PORT", PORT)))
     ap.add_argument("--provider", default="local", choices=KINDS)
     ap.add_argument("--model", default=None, help="override the model name")
+    ap.add_argument("--no-fx", action="store_true", help="disable the FX rates MCP server")
     args = ap.parse_args()
 
     Handler.provider = args.provider
     Handler.model_override = args.model
+    Handler.use_fx = not args.no_fx
 
     for port in range(args.port, args.port + 5):
         try:
@@ -304,7 +336,8 @@ def main() -> None:
             continue
 
         print(f"Dispute Desk → http://localhost:{port}  (Ctrl-C to stop)")
-        print(f"provider: {args.provider}" + (f", model: {args.model}" if args.model else ""))
+        fx_label = " + fx-rates" if Handler.use_fx else ""
+        print(f"provider: {args.provider}{fx_label}" + (f", model: {args.model}" if args.model else ""))
         try:
             server.serve_forever()
         except KeyboardInterrupt:

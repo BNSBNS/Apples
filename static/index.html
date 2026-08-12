@@ -182,7 +182,15 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
-  .trace-tool-call { color: var(--blue); }
+  .trace-tool-call {
+    color: var(--blue);
+    padding: 0.25rem 0.75rem;
+    margin: 0.15rem 0;
+    border-left: 2px solid var(--blue);
+    background: rgba(88, 166, 255, 0.04);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+  }
   .trace-tool-call .arrow { color: var(--cyan); }
   .trace-reasoning {
     color: var(--purple);
@@ -192,10 +200,23 @@
     background: rgba(188, 140, 255, 0.05);
     font-family: var(--sans);
     font-size: 0.78rem;
-    white-space: pre-wrap;
     word-break: break-word;
     line-height: 1.5;
   }
+  .trace-reasoning strong { color: var(--text); font-weight: 600; }
+  .trace-reasoning em { font-style: italic; }
+  .trace-reasoning code {
+    background: rgba(188, 140, 255, 0.1);
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    font-family: var(--mono);
+    font-size: 0.73rem;
+  }
+  .trace-reasoning p { margin: 0.3rem 0; }
+  .trace-reasoning ul, .trace-reasoning ol {
+    margin: 0.3rem 0 0.3rem 1.2rem;
+  }
+  .trace-reasoning li { margin-bottom: 0.15rem; }
   .trace-reasoning::before {
     content: "reasoning ";
     font-size: 0.65rem;
@@ -253,7 +274,38 @@
   }
   .trace-nudge, .trace-chase, .trace-correction { color: var(--yellow); }
   .trace-repair { color: var(--yellow); padding-left: 1.5rem; }
-  .trace-final { color: var(--text); margin-top: 0.5rem; }
+  .trace-final {
+    color: var(--text);
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-left: 2px solid var(--green);
+    background: rgba(63, 185, 80, 0.04);
+    font-family: var(--sans);
+    font-size: 0.82rem;
+    line-height: 1.6;
+    word-break: break-word;
+  }
+  .trace-final strong { color: var(--text); font-weight: 600; }
+  .trace-final em { color: var(--text-muted); font-style: italic; }
+  .trace-final ul, .trace-final ol {
+    margin: 0.25rem 0 0.25rem 1.2rem;
+    padding: 0;
+  }
+  .trace-final li { margin-bottom: 0.15rem; }
+  .trace-final code {
+    font-family: var(--mono);
+    font-size: 0.82em;
+    background: var(--surface-2);
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+  }
+  .trace-final p { margin: 0.3rem 0; }
+  .trace-final h1, .trace-final h2, .trace-final h3, .trace-final h4 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin: 0.5rem 0 0.2rem;
+    color: var(--text);
+  }
   .trace-complete { color: var(--green); margin-top: 0.5rem; font-weight: 600; }
   .trace-error { color: var(--red); margin-top: 0.5rem; }
   .trace-step-limit { color: var(--red); }
@@ -373,13 +425,14 @@
   /* ── Chat bar ── */
   #chat-bar {
     display: flex;
+    align-items: flex-end;
     gap: 0.5rem;
     padding: 0.5rem 1rem;
     border-top: 1px solid var(--border);
     background: var(--surface);
     flex-shrink: 0;
   }
-  #chat-bar input {
+  #chat-input {
     flex: 1;
     padding: 0.35rem 0.6rem;
     font-size: 0.82rem;
@@ -388,9 +441,14 @@
     border: 1px solid var(--border);
     border-radius: 4px;
     color: var(--text);
+    resize: none;
+    overflow-y: hidden;
+    min-height: 1.8rem;
+    max-height: 8rem;
+    line-height: 1.4;
   }
-  #chat-bar input:focus { outline: 1px solid var(--blue); border-color: var(--blue); }
-  #chat-bar input:disabled { opacity: 0.35; }
+  #chat-input:focus { outline: 1px solid var(--blue); border-color: var(--blue); }
+  #chat-input:disabled { opacity: 0.35; }
   #btn-chat {
     padding: 0.35rem 0.85rem;
     font-size: 0.78rem;
@@ -429,9 +487,29 @@
     border-left: 2px solid var(--blue);
     font-family: var(--sans);
     font-size: 0.82rem;
-    white-space: pre-wrap;
     word-break: break-word;
-    line-height: 1.55;
+    line-height: 1.6;
+  }
+  .trace-chat-reply strong { color: var(--text); font-weight: 600; }
+  .trace-chat-reply em { color: var(--text-muted); font-style: italic; }
+  .trace-chat-reply ul, .trace-chat-reply ol {
+    margin: 0.25rem 0 0.25rem 1.2rem;
+    padding: 0;
+  }
+  .trace-chat-reply li { margin-bottom: 0.15rem; }
+  .trace-chat-reply code {
+    font-family: var(--mono);
+    font-size: 0.82em;
+    background: var(--surface-2);
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+  }
+  .trace-chat-reply p { margin: 0.3rem 0; }
+  .trace-chat-reply h1, .trace-chat-reply h2, .trace-chat-reply h3, .trace-chat-reply h4 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin: 0.5rem 0 0.2rem;
+    color: var(--text);
   }
 </style>
 </head>
@@ -455,7 +533,7 @@
     </div>
     <div id="trace-log"></div>
     <div id="chat-bar">
-      <input type="text" id="chat-input" placeholder="Ask a follow-up..." disabled>
+      <textarea id="chat-input" rows="1" placeholder="Ask a follow-up..." disabled></textarea>
       <button id="btn-chat" disabled>Send</button>
     </div>
   </div>
@@ -575,13 +653,21 @@ async function runTriage() {
 // ── Chat (follow-up) ─────────────────────────────────────────────
 
 $("#btn-chat").onclick = () => sendChat();
-$("#chat-input").onkeydown = (e) => { if (e.key === "Enter") sendChat(); };
+$("#chat-input").onkeydown = (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+};
+$("#chat-input").oninput = () => {
+  const el = $("#chat-input");
+  el.style.height = "auto";
+  el.style.height = Math.min(el.scrollHeight, 128) + "px";
+};
 
 async function sendChat() {
   const input = $("#chat-input");
   const message = input.value.trim();
   if (!message || !sessionId) return;
   input.value = "";
+  input.style.height = "auto";
   input.disabled = true;
   $("#btn-chat").disabled = true;
 
@@ -609,12 +695,7 @@ async function sendChat() {
         buf = buf.slice(i + 2);
         if (!line.startsWith("data:")) continue;
         try {
-          const ev = JSON.parse(line.slice(5).trim());
-          if (ev.kind === "chat_reply") {
-            log("trace-chat-reply", esc(ev.text));
-          } else if (ev.kind === "error") {
-            log("trace-error", "✗ " + esc(ev.message));
-          }
+          handleEvent(JSON.parse(line.slice(5).trim()));
         } catch (_) {}
       }
     }
@@ -642,7 +723,7 @@ function handleEvent(ev) {
       break;
 
     case "reasoning":
-      log("trace-reasoning", esc(ev.text));
+      log("trace-reasoning", md(ev.text));
       break;
 
     case "tool_call":
@@ -698,7 +779,7 @@ function handleEvent(ev) {
       break;
 
     case "final":
-      log("trace-final", esc(ev.text));
+      log("trace-final", md(ev.text));
       break;
 
     case "complete":
@@ -720,6 +801,10 @@ function handleEvent(ev) {
 
     case "step_limit":
       log("trace-step-limit", "✗ Hit step limit (" + ev.max_steps + ")");
+      break;
+
+    case "chat_reply":
+      log("trace-chat-reply", md(ev.text));
       break;
 
     case "error":
@@ -840,6 +925,85 @@ function esc(s) {
   const d = document.createElement("div");
   d.textContent = String(s);
   return d.innerHTML;
+}
+
+function md(s) {
+  if (s == null) return "";
+  // Escape HTML first, then apply markdown transforms
+  let t = esc(s);
+
+  // Split into lines for block-level processing
+  const lines = t.split("\n");
+  const out = [];
+  let inList = false;
+  let listType = null; // "ul" or "ol"
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+
+    // Headings: ### text
+    const hMatch = line.match(/^(#{1,4})\s+(.+)$/);
+    if (hMatch) {
+      if (inList) { out.push("</" + listType + ">"); inList = false; }
+      const level = hMatch[1].length;
+      out.push("<h" + level + ">" + inline(hMatch[2]) + "</h" + level + ">");
+      continue;
+    }
+
+    // Unordered list: - text or * text
+    const ulMatch = line.match(/^\s*[-*]\s+(.+)$/);
+    if (ulMatch) {
+      if (!inList || listType !== "ul") {
+        if (inList) out.push("</" + listType + ">");
+        out.push("<ul>");
+        inList = true;
+        listType = "ul";
+      }
+      out.push("<li>" + inline(ulMatch[1]) + "</li>");
+      continue;
+    }
+
+    // Ordered list: 1. text
+    const olMatch = line.match(/^\s*\d+[.)]\s+(.+)$/);
+    if (olMatch) {
+      if (!inList || listType !== "ol") {
+        if (inList) out.push("</" + listType + ">");
+        out.push("<ol>");
+        inList = true;
+        listType = "ol";
+      }
+      out.push("<li>" + inline(olMatch[1]) + "</li>");
+      continue;
+    }
+
+    // Close any open list
+    if (inList) { out.push("</" + listType + ">"); inList = false; }
+
+    // Empty line = paragraph break
+    if (!line.trim()) {
+      out.push("");
+      continue;
+    }
+
+    // Regular paragraph
+    out.push("<p>" + inline(line) + "</p>");
+  }
+
+  if (inList) out.push("</" + listType + ">");
+
+  return out.join("\n");
+}
+
+function inline(s) {
+  // Bold: **text** or __text__
+  s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/__(.+?)__/g, "<strong>$1</strong>");
+  // Italic: *text* or _text_ (but not inside **)
+  s = s.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<em>$1</em>");
+  s = s.replace(/(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/g, "<em>$1</em>");
+  // Inline code: `text`
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  return s;
 }
 
 function truncate(s, n) {
